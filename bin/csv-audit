@@ -1,0 +1,73 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+require __DIR__ . '/../src/CsvAudit.php';
+
+use CsvAudit\CsvAudit;
+
+$usage = "Usage: php bin/csv-audit FILE [--required=NAME] [--delimiter=CHAR|tab] [--json]\n";
+if ($argc === 2 && $argv[1] === '--help') {
+    echo $usage;
+    exit(0);
+}
+
+try {
+    $path = null;
+    $json = false;
+    $delimiter = ',';
+    $required = [];
+    $positionalOnly = false;
+
+    foreach (array_slice($argv, 1) as $argument) {
+        if (!$positionalOnly && $argument === '--') {
+            $positionalOnly = true;
+        } elseif (!$positionalOnly && $argument === '--json') {
+            $json = true;
+        } elseif (!$positionalOnly && str_starts_with($argument, '--required=')) {
+            $name = trim(substr($argument, strlen('--required=')));
+            if ($name === '') {
+                throw new InvalidArgumentException('A required column needs a name.');
+            }
+            $required[] = $name;
+        } elseif (!$positionalOnly && str_starts_with($argument, '--delimiter=')) {
+            $delimiter = substr($argument, strlen('--delimiter='));
+            $delimiter = $delimiter === 'tab' ? "\t" : $delimiter;
+            if (strlen($delimiter) !== 1 || str_contains("\"\r\n\0", $delimiter)) {
+                throw new InvalidArgumentException('Use a single-byte delimiter or tab.');
+            }
+        } elseif ($path === null && ($positionalOnly || !str_starts_with($argument, '-'))) {
+            $path = $argument;
+        } else {
+            throw new InvalidArgumentException("Unexpected argument: $argument");
+        }
+    }
+
+    if ($path === null || !is_file($path) || ($stream = @fopen($path, 'rb')) === false) {
+        throw new InvalidArgumentException('Provide a readable local CSV file.');
+    }
+
+    try {
+        $report = (new CsvAudit())->inspect($stream, $delimiter, $required);
+    } finally {
+        fclose($stream);
+    }
+
+    if ($json) {
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR), PHP_EOL;
+    } else {
+        printf("%d data records checked, %d issues.\n", $report['records'], $report['issue_count']);
+        foreach ($report['issues'] as $issue) {
+            printf("Record %d [%s] %s\n", $issue['record'], $issue['code'], $issue['message']);
+        }
+        if ($report['omitted'] > 0) {
+            printf("%d additional issues omitted.\n", $report['omitted']);
+        }
+    }
+    exit($report['issue_count'] === 0 ? 0 : 1);
+} catch (InvalidArgumentException | RuntimeException | JsonException $error) {
+    fwrite(STDERR, $error->getMessage() . PHP_EOL);
+    fwrite(STDERR, $usage);
+    exit(2);
+}

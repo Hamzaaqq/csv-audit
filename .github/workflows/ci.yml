@@ -1,0 +1,23 @@
+name: Tests
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        php: ['8.2', '8.3', '8.4', '8.5']
+    container: php:${{ matrix.php }}-cli
+    steps:
+      - uses: actions/checkout@v4
+      - run: php -l src/CsvAudit.php
+      - run: php -l bin/csv-audit
+      - run: php tests/run.php
+      - run: |
+          status=0
+          php bin/csv-audit examples/customers.csv --required=email --json || status=$?
+          test "$status" -eq 1
